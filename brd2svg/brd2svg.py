@@ -1,179 +1,137 @@
 #!/usr/bin/env python3
-
 import sys
 import os
 import copy
-import re
 from lxml import etree
 
-# Paths
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SUBPARTS_DIR = os.path.join(SCRIPT_DIR, "..", "subparts", "breadboard")
-
-USAGE_MSG = f"""Usage:
-  python brd2svg.py <file.brd>
-
-Description:
-  Converts Eagle .brd components to a combined SVG breadboard layout.
-  Looks for subpart SVGs in: {os.path.normpath(SUBPARTS_DIR)}
-  Output saved as <inputfile>-output.svg
-"""
-
-# Regex for extracting numbers from SVG path data
-FLOAT_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+SUBPARTS_DIR = os.path.join(os.path.dirname(__file__), "..", "subparts", "breadboard")
 
 def usage():
-    print(USAGE_MSG)
+    print(f"Usage: python {os.path.basename(__file__)} filename.brd")
     sys.exit(1)
 
-def parse_brd_file(brd_path):
-    try:
-        tree = etree.parse(brd_path)
-        return tree.getroot()
-    except (etree.XMLSyntaxError, OSError) as e:
-        print(f"Error reading or parsing '{brd_path}': {e}")
-        sys.exit(1)
+def parse_brd_file(path):
+    parser = etree.XMLParser(remove_blank_text=True)
+    with open(path, "rb") as f:
+        tree = etree.parse(f, parser)
+    return tree.getroot()
 
 def extract_components(root):
-    # Extract elements with (name, package)
-    components = []
-    for element in root.xpath(".//element"):
-        name = element.get("name")
-        package = element.get("package")
+    # Extract (name, package) for all elements
+    comps = []
+    for elem in root.findall(".//elements/element"):
+        name = elem.get("name")
+        package = elem.get("package")
         if name and package:
-            components.append((name, package))
-    return components
+            comps.append((name, package))
+    return comps
 
-def match_svg(package, subparts_dir=SUBPARTS_DIR):
-    filename = f"{package}.svg"
-    svg_path = os.path.join(subparts_dir, filename)
-    return svg_path if os.path.isfile(svg_path) else None
+def match_svg(package_name):
+    svg_path = os.path.join(SUBPARTS_DIR, f"{package_name}.svg")
+    if os.path.isfile(svg_path):
+        return svg_path
+    return None
 
 def parse_svg(svg_path):
+    parser = etree.XMLParser(remove_blank_text=True)
     try:
-        parser = etree.XMLParser(remove_comments=True)
         tree = etree.parse(svg_path, parser)
         return tree.getroot()
-    except (etree.XMLSyntaxError, OSError) as e:
-        print(f"Error parsing SVG '{svg_path}': {e}")
+    except Exception as e:
+        print(f"Error parsing SVG {svg_path}: {e}")
         return None
 
-def add_offset_to_path_d(d_attr, x_off, y_off):
-    # This is a simplified approach: adds x_off to all X coords, y_off to all Y coords
-    # SVG path commands alternate letters and numbers
-    # We'll split numbers, offset pairs accordingly
-    
-    tokens = FLOAT_RE.findall(d_attr)
-    if not tokens:
-        return d_attr
-    
-    # Convert tokens to float
-    nums = list(map(float, tokens))
-    
-    # Heuristic: path coords come in pairs (x,y)
-    # Add offset to each pair (x+ x_off, y + y_off)
-    new_coords = []
-    i = 0
-    while i < len(nums):
-        x = nums[i] + x_off
-        y = nums[i+1] + y_off if (i+1) < len(nums) else 0
-        new_coords.append(f"{x:.3f}")
-        new_coords.append(f"{y:.3f}")
-        i += 2
-    
-    # Now reconstruct the d string by replacing the numbers with new ones
-    # We'll replace numbers in original string in order
-    def replacer(match):
-        return new_coords.pop(0)
-    
-    new_d = FLOAT_RE.sub(replacer, d_attr)
-    return new_d
+def extract_board_outline(root):
+    # Extract points from <plain><wire> elements to form polygon
+    plain = root.find(".//plain")
+    if plain is None:
+        print("No <plain> element found for board outline.")
+        return None
 
-def offset_svg_coords(svg_root, x_off, y_off):
-    # Modify coordinates inside SVG elements by adding x_off, y_off
-    # Common attributes: x, y, cx, cy, points, d (path)
-    
-    # For all elements recursively
+    points = []
+    # Extract all wire endpoints
+    for wire in plain.findall("wire"):
+        x1 = float(wire.get("x1"))
+        y1 = float(wire.get("y1"))
+        x2 = float(wire.get("x2"))
+        y2 = float(wire.get("y2"))
+        points.append((x1, y1))
+        points.append((x2, y2))
+
+    if not points:
+        print("No wires found in <plain> for board outline.")
+        return None
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_points = []
+    for p in points:
+        if p not in seen:
+            unique_points.append(p)
+            seen.add(p)
+
+    return unique_points
+
+def bounding_box(points):
+    xs, ys = zip(*points)
+    return min(xs), min(ys), max(xs), max(ys)
+
+def offset_svg_coords(svg_root, dx, dy):
+    # Walk all elements with 'x' and 'y' attributes, offset them by dx, dy
+    # Also offset 'cx', 'cy' for circles and ellipse
+    # For <path> data, ideally apply transform or rewrite, but here we skip to avoid complexity
     for elem in svg_root.iter():
-        # x and y
-        if 'x' in elem.attrib:
-            try:
-                elem.attrib['x'] = str(float(elem.attrib['x']) + x_off)
-            except:
-                pass
-        if 'y' in elem.attrib:
-            try:
-                elem.attrib['y'] = str(float(elem.attrib['y']) + y_off)
-            except:
-                pass
-        # cx and cy (circle, ellipse)
-        if 'cx' in elem.attrib:
-            try:
-                elem.attrib['cx'] = str(float(elem.attrib['cx']) + x_off)
-            except:
-                pass
-        if 'cy' in elem.attrib:
-            try:
-                elem.attrib['cy'] = str(float(elem.attrib['cy']) + y_off)
-            except:
-                pass
-        # points (polyline, polygon)
-        if 'points' in elem.attrib:
-            points = elem.attrib['points'].strip()
-            # points format: "x1,y1 x2,y2 ..."
-            new_points = []
-            for pt in points.split():
-                if ',' in pt:
-                    px, py = pt.split(',')
-                    try:
-                        pxn = float(px) + x_off
-                        pyn = float(py) + y_off
-                        new_points.append(f"{pxn},{pyn}")
-                    except:
-                        new_points.append(pt)
-                else:
-                    new_points.append(pt)
-            elem.attrib['points'] = " ".join(new_points)
-        # path d attribute
-        if 'd' in elem.attrib:
-            try:
-                elem.attrib['d'] = add_offset_to_path_d(elem.attrib['d'], x_off, y_off)
-            except:
-                pass
+        for attr in ['x', 'y', 'cx', 'cy']:
+            if attr in elem.attrib:
+                try:
+                    val = float(elem.get(attr))
+                    elem.set(attr, str(val + (dx if attr in ['x', 'cx'] else dy)))
+                except ValueError:
+                    pass
+    # Note: This simple offset won't affect <path> coordinates inside 'd' attributes
 
-def combine_svgs(components, positions, board_outline=None):
+def create_svg_root(minX, minY, maxX, maxY):
     SVG_NS = "http://www.w3.org/2000/svg"
     NSMAP = {None: SVG_NS}
+    width = maxX - minX
+    height = maxY - minY
+    width_in = width / 1000.0
+    height_in = height / 1000.0
 
-    # Calculate canvas size if board_outline given, else default 2000 x 2000
+    svg = etree.Element("svg", nsmap=NSMAP)
+    svg.attrib['width'] = f"{width_in}in"
+    svg.attrib['height'] = f"{height_in}in"
+    svg.attrib['viewBox'] = f"{minX} {minY} {width} {height}"
+    svg.attrib['version'] = "1.1"
+    return svg
+
+def combine_svgs(components, positions, board_outline=None):
+    # Determine bounding box from board outline + component positions (approx)
+    bminX, bminY, bmaxX, bmaxY = (0, 0, 2000, 2000)
     if board_outline:
-        xs, ys = zip(*board_outline)
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        width = max_x - min_x + 200  # Add margin 200 mils
-        height = max_y - min_y + 200
-        viewbox_x = min_x - 100
-        viewbox_y = min_y - 100
-    else:
-        width = 2000
-        height = 2000
-        viewbox_x = 0
-        viewbox_y = 0
+        bminX, bminY, bmaxX, bmaxY = bounding_box(board_outline)
 
-    root_svg = etree.Element("svg", nsmap=NSMAP)
-    root_svg.attrib['width'] = str(width)
-    root_svg.attrib['height'] = str(height)
-    root_svg.attrib['viewBox'] = f"{viewbox_x} {viewbox_y} {width} {height}"
-    root_svg.attrib['version'] = "1.1"
+    # Also include component positions to extend bounding box if needed
+    for (x, y) in positions:
+        if x < bminX: bminX = x
+        if y < bminY: bminY = y
+        if x > bmaxX: bmaxX = x
+        if y > bmaxY: bmaxY = y
 
-    # Draw board outline polygon if available
+    svg_root = create_svg_root(bminX, bminY, bmaxX, bmaxY)
+
+    # Create a top-level group with transform to translate board min coords to 0,0
+    g_root = etree.Element("g", attrib={"transform": f"translate({-bminX},{-bminY})"})
+    svg_root.append(g_root)
+
+    # Add board outline polygon
     if board_outline:
         points_str = " ".join(f"{x},{y}" for x, y in board_outline)
         polygon = etree.Element("polygon", points=points_str)
-        polygon.attrib['style'] = "fill:#e0e0e0;stroke:#000000;stroke-width:5"
-        root_svg.append(polygon)
+        polygon.attrib['style'] = "fill:#e0e0e0;stroke:#000000;stroke-width:10"
+        g_root.append(polygon)
 
-    # Add components as before...
+    # Add components as groups
     for i, (name, package) in enumerate(components):
         svg_path = match_svg(package)
         if not svg_path:
@@ -185,66 +143,24 @@ def combine_svgs(components, positions, board_outline=None):
             print(f"Warning: Failed to parse SVG for {package}")
             continue
 
+        # Remove width/height/viewBox from subpart to avoid conflicts
         sub_svg_root.attrib.pop('width', None)
         sub_svg_root.attrib.pop('height', None)
         sub_svg_root.attrib.pop('viewBox', None)
 
         part_svg = copy.deepcopy(sub_svg_root)
 
+        # Offset the subpart contents by component position (manual offset)
         x_off, y_off = positions[i]
         offset_svg_coords(part_svg, x_off, y_off)
 
-        g = etree.Element("g", id=name)
-        children = list(part_svg)
-        for c in children:
-            g.append(c)
-        root_svg.append(g)
+        # Wrap in a group with component name as id
+        g_comp = etree.Element("g", id=name)
+        for c in list(part_svg):
+            g_comp.append(c)
+        g_root.append(g_comp)
 
-    return root_svg
-
-def extract_board_outline(root):
-    # Try to find the <plain> element inside <drawing> or <board>
-    plain = root.find(".//plain")
-    if plain is None:
-        print("No <plain> element found for board outline.")
-        return None
-    
-    points = []
-
-    # Usually the outline is defined by <wire> elements connected in a loop
-    for wire in plain.findall("wire"):
-        x1 = float(wire.get("x1"))
-        y1 = float(wire.get("y1"))
-        x2 = float(wire.get("x2"))
-        y2 = float(wire.get("y2"))
-        # Add start and end points (converted to mils)
-        points.append( (x1, y1) )
-        points.append( (x2, y2) )
-    
-    if not points:
-        print("No wires found in <plain> for board outline.")
-        return None
-
-    # Remove duplicates and order points to form a polygon path
-    # For now, just remove duplicates and keep order, better algorithms can be added later
-    seen = set()
-    unique_points = []
-    for p in points:
-        if p not in seen:
-            unique_points.append(p)
-            seen.add(p)
-
-    # Convert Eagle units (assuming mm) to mils (0.001 inch)
-    # Eagle default units may be mm; adjust here if you know units (for now assume mm)
-    # 1 mm = 39.3701 mils (0.001 inch)
-    MM_TO_MILS = 39.3701
-    polygon_points = []
-    for x, y in unique_points:
-        px = x * MM_TO_MILS
-        py = y * MM_TO_MILS
-        polygon_points.append( (px, py) )
-
-    return polygon_points
+    return svg_root
 
 def main():
     if len(sys.argv) != 2:
@@ -265,7 +181,7 @@ def main():
 
     print(f"Found {len(components)} components.")
 
-    # For demo, place components on grid with 500 mil spacing
+    # For now, just place components on a 500 mil grid
     positions = []
     grid_spacing = 500  # mils
     cols = 10
