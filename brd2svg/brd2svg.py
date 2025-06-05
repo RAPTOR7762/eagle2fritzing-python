@@ -121,17 +121,21 @@ def combine_svgs(components, positions, board_outline=None):
     # -------------------------------------------------------------------
 
     # Add board outline polygon
-    if board_outline:
-        points_str = " ".join(f"{x},{y}" for x, y in board_outline)
-        polygon = etree.Element("polygon", points=points_str)
-        polygon.attrib['style'] = "fill:#e0e0e0;stroke:#000000;stroke-width:10"
-        g_root.append(polygon)
-
-    for i, (name, package) in enumerate(components):
-        svg_path = match_svg(package)
-        if not svg_path:
-            print(f"Warning: No SVG for package '{package}' (component {name})")
-            continue
+    plain = root.find(".//plain")
+    if plain is not None:
+        for wire in plain.findall("wire"):
+            x1 = float(wire.get("x1"))
+            y1 = float(wire.get("y1"))
+            x2 = float(wire.get("x2"))
+            y2 = float(wire.get("y2"))
+            line = etree.Element("line", x1=str(x1), y1=str(y1), x2=str(x2), y2=str(y2))
+            line.attrib['style'] = "stroke:#000000;stroke-width:10"
+            g_root.append(line)
+        for i, (name, package) in enumerate(components):
+            svg_path = match_svg(package)
+            if not svg_path:
+                print(f"Warning: No SVG for package '{package}' (component {name})")
+                continue
 
         sub_svg_root = parse_svg(svg_path)
         if sub_svg_root is None:
