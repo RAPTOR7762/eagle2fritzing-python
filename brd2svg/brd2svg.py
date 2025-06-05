@@ -137,10 +137,10 @@ def combine_svgs(components, positions, board_outline=None):
                 print(f"Warning: No SVG for package '{package}' (component {name})")
                 continue
 
-        sub_svg_root = parse_svg(svg_path)
-        if sub_svg_root is None:
-            print(f"Warning: Failed to parse SVG for {package}")
-            continue
+            sub_svg_root = parse_svg(svg_path)
+            if sub_svg_root is None:
+                print(f"Warning: Failed to parse SVG for {package}")
+                continue
 
         sub_svg_root.attrib.pop('width', None)
         sub_svg_root.attrib.pop('height', None)
