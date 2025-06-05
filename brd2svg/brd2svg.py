@@ -17,7 +17,6 @@ def parse_brd_file(path):
     return tree.getroot()
 
 def extract_components(root):
-    # Extract (name, package) for all elements
     comps = []
     for elem in root.findall(".//elements/element"):
         name = elem.get("name")
@@ -42,14 +41,12 @@ def parse_svg(svg_path):
         return None
 
 def extract_board_outline(root):
-    # Extract points from <plain><wire> elements to form polygon
     plain = root.find(".//plain")
     if plain is None:
         print("No <plain> element found for board outline.")
         return None
 
     points = []
-    # Extract all wire endpoints
     for wire in plain.findall("wire"):
         x1 = float(wire.get("x1"))
         y1 = float(wire.get("y1"))
@@ -62,7 +59,6 @@ def extract_board_outline(root):
         print("No wires found in <plain> for board outline.")
         return None
 
-    # Remove duplicates while preserving order
     seen = set()
     unique_points = []
     for p in points:
@@ -77,9 +73,6 @@ def bounding_box(points):
     return min(xs), min(ys), max(xs), max(ys)
 
 def offset_svg_coords(svg_root, dx, dy):
-    # Walk all elements with 'x' and 'y' attributes, offset them by dx, dy
-    # Also offset 'cx', 'cy' for circles and ellipse
-    # For <path> data, ideally apply transform or rewrite, but here we skip to avoid complexity
     for elem in svg_root.iter():
         for attr in ['x', 'y', 'cx', 'cy']:
             if attr in elem.attrib:
@@ -106,12 +99,10 @@ def create_svg_root(minX, minY, maxX, maxY):
     return svg
 
 def combine_svgs(components, positions, board_outline=None):
-    # Determine bounding box from board outline + component positions (approx)
     bminX, bminY, bmaxX, bmaxY = (0, 0, 2000, 2000)
     if board_outline:
         bminX, bminY, bmaxX, bmaxY = bounding_box(board_outline)
 
-    # Also include component positions to extend bounding box if needed
     for (x, y) in positions:
         if x < bminX: bminX = x
         if y < bminY: bminY = y
@@ -120,9 +111,14 @@ def combine_svgs(components, positions, board_outline=None):
 
     svg_root = create_svg_root(bminX, bminY, bmaxX, bmaxY)
 
+    # ---- Fritzing-compatible: Everything inside <g id="breadboard"> ----
+    breadboard_g = etree.Element("g", id="breadboard")
+    svg_root.append(breadboard_g)
+
     # Create a top-level group with transform to translate board min coords to 0,0
     g_root = etree.Element("g", attrib={"transform": f"translate({-bminX},{-bminY})"})
-    svg_root.append(g_root)
+    breadboard_g.append(g_root)
+    # -------------------------------------------------------------------
 
     # Add board outline polygon
     if board_outline:
@@ -131,7 +127,6 @@ def combine_svgs(components, positions, board_outline=None):
         polygon.attrib['style'] = "fill:#e0e0e0;stroke:#000000;stroke-width:10"
         g_root.append(polygon)
 
-    # Add components as groups
     for i, (name, package) in enumerate(components):
         svg_path = match_svg(package)
         if not svg_path:
@@ -143,18 +138,15 @@ def combine_svgs(components, positions, board_outline=None):
             print(f"Warning: Failed to parse SVG for {package}")
             continue
 
-        # Remove width/height/viewBox from subpart to avoid conflicts
         sub_svg_root.attrib.pop('width', None)
         sub_svg_root.attrib.pop('height', None)
         sub_svg_root.attrib.pop('viewBox', None)
 
         part_svg = copy.deepcopy(sub_svg_root)
 
-        # Offset the subpart contents by component position (manual offset)
         x_off, y_off = positions[i]
         offset_svg_coords(part_svg, x_off, y_off)
 
-        # Wrap in a group with component name as id
         g_comp = etree.Element("g", id=name)
         for c in list(part_svg):
             g_comp.append(c)
@@ -181,7 +173,6 @@ def main():
 
     print(f"Found {len(components)} components.")
 
-    # For now, just place components on a 500 mil grid
     positions = []
     grid_spacing = 500  # mils
     cols = 10
