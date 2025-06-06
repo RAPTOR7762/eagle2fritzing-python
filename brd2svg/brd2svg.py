@@ -1,3 +1,6 @@
+# Metadata
+version = '0.0.1a'
+
 #!/usr/bin/env python3
 import sys
 import os
