@@ -90,9 +90,10 @@ def create_svg_root(minX, minY, maxX, maxY):
     height_in = height / 1000.0
 
     svg = etree.Element("svg", nsmap=NSMAP)
+    # SVG should always start at 0,0 for Fritzing
     svg.attrib['width'] = f"{width_in}in"
     svg.attrib['height'] = f"{height_in}in"
-    svg.attrib['viewBox'] = f"{minX} {minY} {width} {height}"
+    svg.attrib['viewBox'] = f"0 0 {width} {height}"
     svg.attrib['version'] = "1.1"
     return svg
 
@@ -125,7 +126,7 @@ def combine_svgs(components, board_outline=None):
     svg_root.append(breadboard_g)
 
     # Create a top-level group with transform to translate board min coords to 0,0
-    g_root = etree.Element("g", attrib={"transform": f"translate({-bminX},{-bminY})"})
+    g_root = etree.Element("g")  # No offset needed
     breadboard_g.append(g_root)
     # -------------------------------------------------------------------
 
