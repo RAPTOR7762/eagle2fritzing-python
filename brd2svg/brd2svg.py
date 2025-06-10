@@ -1,5 +1,5 @@
 # Metadata
-version = '0.0.1b.1'
+version = '0.0.1b.2'
 
 #!/usr/bin/env python3
 import sys
@@ -90,10 +90,9 @@ def create_svg_root(minX, minY, maxX, maxY):
     height_in = height / 1000.0
 
     svg = etree.Element("svg", nsmap=NSMAP)
-    # SVG should always start at 0,0 for Fritzing
     svg.attrib['width'] = f"{width_in}in"
     svg.attrib['height'] = f"{height_in}in"
-    svg.attrib['viewBox'] = f"0 0 {width} {height}"
+    svg.attrib['viewBox'] = f"0 0 {width} {height}"   # <--- CHANGE: viewBox always starts at 0,0
     svg.attrib['version'] = "1.1"
     return svg
 
@@ -121,14 +120,17 @@ def combine_svgs(components, board_outline=None):
 
     svg_root = create_svg_root(bminX, bminY, bmaxX, bmaxY)
 
-    # ---- Fritzing-compatible: Everything inside <g id="breadboard"> ----
+    # Everything inside <g id="breadboard">
     breadboard_g = etree.Element("g", id="breadboard")
     svg_root.append(breadboard_g)
 
-    # Create a top-level group with transform to translate board min coords to 0,0
-    g_root = etree.Element("g")  # No offset needed
+    # All content is offset so board starts at (0,0)
+    g_root = etree.Element("g", attrib={"transform": f"translate({-bminX},{-bminY})"})
     breadboard_g.append(g_root)
-    # -------------------------------------------------------------------
+
+    # ... rest of your component and board outline drawing logic ...
+
+    return svg_root
 
     # Add board outline wires (flipped Y)
     if board_outline is not None:
@@ -205,8 +207,8 @@ def main():
     tree.write(output_path, pretty_print=True, xml_declaration=True, encoding="UTF-8")
     print(f"Output saved to: {output_path}")
 
-if __name__ == "__main__":
-    main()
-
     # remove me later
     print(version)
+
+if __name__ == "__main__":
+    main()
