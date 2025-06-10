@@ -1,5 +1,5 @@
 # Metadata
-version = '0.0.1a'
+version = '0.0.1b.1'
 
 #!/usr/bin/env python3
 import sys
